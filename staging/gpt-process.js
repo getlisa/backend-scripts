@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Load environment variables
+require('dotenv').config();
+
 // GPT Processing Script - AI Extraction Only
 // Processes calls from database that need AI extraction
 const { createClient } = require('@supabase/supabase-js');
@@ -11,6 +14,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 console.log('🤖 Starting GPT Processing Script...');
 console.log(`🔗 Database: ${SUPABASE_URL}`);
+console.log(`🔑 Service Key: ${SUPABASE_SERVICE_ROLE_KEY ? 'Present' : 'Missing'}`);
+console.log(`🤖 OpenAI Key: ${OPENAI_API_KEY ? 'Present' : 'Missing'}`);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 

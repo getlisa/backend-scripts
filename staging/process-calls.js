@@ -6,9 +6,9 @@
 const { createClient } = require('@supabase/supabase-js');
 
 // Configuration
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://xlfebnscsbakduedrijj.supabase.co';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsZmVibnNjc2Jha2R1ZWRyaWpqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mzg5OTk3OSwiZXhwIjoyMDY5NDc1OTc5fQ.6UTNcXF27gZmVC0DU3Q-eh7-l8R_8zJC2E-LIN8aahY';
-const RETELL_API_KEY = process.env.RETELL_API_KEY || 'key_f179b569899f2ab68c5f875033e0';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ;
+const RETELL_API_KEY = process.env.RETELL_API_KEY ;
 
 console.log('🚀 Starting Call Processing Script (Retell AI → Database)...');
 console.log(`🔗 Database: ${SUPABASE_URL}`);
