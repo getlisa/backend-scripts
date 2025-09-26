@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Load environment variables
+require('dotenv').config();
+
 // Call Processing Script - Retell AI to Database Only
 // Processes all agents from user_profiles, fetches calls from Retell AI, and stores in database
 // GPT processing is handled separately by gpt-process.js
