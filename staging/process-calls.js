@@ -119,6 +119,11 @@ async function getAllAgents() {
   }
 }
 
+// Helper function to add delay
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Fetch calls from RetellAI API for specific agent
 async function fetchCallsFromRetellAPI(agentId) {
   console.log(`📞 Fetching calls for agent: ${agentId}`);
@@ -164,6 +169,10 @@ async function fetchCallsFromRetellAPI(agentId) {
   } catch (error) {
     console.error(`❌ Error fetching calls from RetellAI for agent ${agentId}:`, error.message);
     return [];
+  } finally {
+    // Add delay after each API call to prevent rate limiting
+    console.log('⏳ Adding delay to prevent rate limiting...');
+    await delay(20); // 500ms delay
   }
 }
 
