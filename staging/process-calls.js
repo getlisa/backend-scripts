@@ -447,6 +447,8 @@ async function processAllAgents() {
           failed: 0
         });
       }
+      console.log('⏳ Adding delay to prevent rate limiting...');
+      await delay(20); // 500ms delay
     }
     
     // Summary
