@@ -6,8 +6,8 @@ dotenv.config();
 import { createClient } from '@supabase/supabase-js';
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
-const ZT_API_BASE = 'https://services-demo.zentrades.pro';
-const OB_APP_URL = 'https://ob-demo.zentrades.pro/3';
+const ZT_API_BASE = process.env.ZT_API_BASE;
+const OB_APP_URL = process.env.OB_APP_URL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ;
 
@@ -15,6 +15,11 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ;
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 console.log('🔧 ZT Integration Script loaded');
+console.log('🔍 Environment Variables Check:');
+console.log('  ZT_API_BASE:', ZT_API_BASE || '❌ NOT LOADED');
+console.log('  OB_APP_URL:', OB_APP_URL || '❌ NOT LOADED');
+console.log('  SUPABASE_URL:', SUPABASE_URL ? '✅ Loaded' : '❌ NOT LOADED');
+console.log('  SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_ROLE_KEY ? '✅ Loaded' : '❌ NOT LOADED');
 
 function getTimestamp() { return Date.now(); }
 

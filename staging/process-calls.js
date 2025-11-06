@@ -172,7 +172,7 @@ async function fetchCallsFromRetellAPI(agentId) {
   } finally {
     // Add delay after each API call to prevent rate limiting
     console.log('⏳ Adding delay to prevent rate limiting...');
-    await delay(20); // 500ms delay
+    await delay(200); // 200ms delay
   }
 }
 
@@ -448,7 +448,7 @@ async function processAllAgents() {
         });
       }
       console.log('⏳ Adding delay to prevent rate limiting...');
-      await delay(20); // 500ms delay
+      await delay(200); // 200ms delay
     }
     
     // Summary
