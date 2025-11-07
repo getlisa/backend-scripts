@@ -1,7 +1,6 @@
 {
   "name": "optimized-call-processor",
   "version": "1.0.0",
-  "type": "module",
   "description": "Clean architecture call processing worker with Express and TypeScript",
   "main": "dist/main.js",
   "scripts": {

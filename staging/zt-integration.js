@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Load environment variables
-import dotenv from 'dotenv';
+const dotenv = require('dotenv');
 dotenv.config();
 
-import { createClient } from '@supabase/supabase-js';
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-
+const { createClient } = require('@supabase/supabase-js');
+const fetch = (...args) => import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
 const ZT_API_BASE = process.env.ZT_API_BASE;
 const OB_APP_URL = process.env.OB_APP_URL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -38,26 +37,57 @@ async function getZTCredentialsForUser(targetUserId) {
   };
 }
 
-async function getZTTokenForUser(user_id) {
-  const { credentials } = await getZTCredentialsForUser(user_id);
+async function requestZTToken(credentials, userId) {
+  if (!credentials?.username || !credentials?.password) throw new Error('requestZTToken: incomplete credentials');
   const loginUrl = `${ZT_API_BASE}/api/auth/login?timestamp=${getTimestamp()}`;
   const res = await fetch(loginUrl, {
     method: 'POST',
-    headers: { 'accept': 'application/json, text/plain, */*','content-type': 'application/json','origin': 'https://demo-app.zentrades.pro','referer': 'https://demo-app.zentrades.pro/' },
+    headers: {
+      'accept': 'application/json, text/plain, */*',
+      'content-type': 'application/json',
+      'referer': OB_APP_URL
+    },
     body: JSON.stringify(credentials)
   });
-  if (!res.ok) throw new Error(`Login failed: ${res.status}`);
+  if (!res.ok) {
+    const errorBody = await res.text();
+    throw new Error(`Login failed: ${res.status} - ${errorBody}`);
+  }
   const json = await res.json();
   const token = json?.result?.['access-token'];
   if (!token) throw new Error('No access-token');
-  return { token, user_id };
+  return { token, user_id: userId };
 }
 
-async function getAgentIdForUser(userId) {
-  const { data, error } = await supabase.from('user_profiles').select('agent_id').eq('user_id', userId).single();
-  if (error) throw new Error(error.message);
-  if (!data?.agent_id) throw new Error('No agent_id for user');
-  return data.agent_id;
+async function getZTTokenForUser(user_id) {
+  const { credentials } = await getZTCredentialsForUser(user_id);
+  return requestZTToken(credentials, user_id);
+}
+
+async function getZTTokenForAgent(agentId) {
+  if (!agentId) throw new Error('getZTTokenForAgent: agent_id is required');
+  const { data: profiles, error: profilesErr } = await supabase
+    .from('user_profiles')
+    .select('user_id')
+    .eq('agent_id', agentId);
+  if (profilesErr) throw new Error(`user_profiles lookup failed: ${profilesErr.message}`);
+  const userIds = (profiles || [])
+    .map(profile => profile?.user_id)
+    .filter((id) => Boolean(id));
+  if (userIds.length === 0) throw new Error(`No user_ids mapped for agent_id=${agentId}`);
+
+  const { data: tokenRows, error: tokenErr } = await supabase
+    .from('zentrades_tokens')
+    .select('user_id, username, password')
+    .in('user_id', userIds);
+  if (tokenErr) throw new Error(`zentrades_tokens lookup failed: ${tokenErr.message}`);
+  if (!tokenRows || tokenRows.length === 0) throw new Error(`No zentrades_tokens row for agent_id=${agentId}`);
+
+  const matchingToken = tokenRows.find(row => row?.username && row?.password) || tokenRows[0];
+  if (!matchingToken?.user_id) throw new Error(`Invalid zentrades_tokens entry for agent_id=${agentId}`);
+
+  const credentials = { username: matchingToken.username, password: matchingToken.password, rememberMe: true };
+  return requestZTToken(credentials, matchingToken.user_id);
 }
 
 function parseAddress(address) {
@@ -174,7 +204,18 @@ function validateLeadData(lead) {
 
 async function createZTBooking(lead, token) {
   const payload = transformLeadToZTBooking(lead);
-  const res = await fetch(`${ZT_API_BASE}/api/ob/obr/book/`, { method:'POST', headers:{ 'accept':'application/json, text/plain, */*','content-type':'application/json','origin':OB_APP_URL,'referer':OB_APP_URL,'timezone-offset':'-330','user-agent':'Mozilla/5.0','Authorization':`Bearer ${token}` }, body: JSON.stringify(payload) });
+  const res = await fetch(`${ZT_API_BASE}/api/ob/obr/book/`, {
+    method: 'POST',
+    headers: {
+      'accept': 'application/json, text/plain, */*',
+      'content-type': 'application/json',
+      'referer': OB_APP_URL,
+      'timezone-offset': '-330',
+      'user-agent': 'Mozilla/5.0',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  });
   const json = await res.json();
   if (res.ok) return { success:true, booking_id: json?.result?.id || json?.id, response: json };
   return { success:false, error: json?.message || 'Unknown error', response: json };
@@ -208,20 +249,8 @@ async function runManualQueue() {
     try {
       const { data: lead, error: leadErr } = await supabase.from('call_logs').select('*').eq('call_id', callId).eq('call_status', 'ended').single();
       if (leadErr || !lead) throw new Error(`Lead not found: ${callId}`);
-      // Resolve user_id from agent_id
-      const { data: userProfile, error: profErr } = await supabase
-        .from('user_profiles')
-        .select('user_id')
-        .eq('agent_id', lead.agent_id)
-        .single();
-      if (profErr || !userProfile?.user_id) throw new Error(`No user_id mapped for agent_id=${lead.agent_id}`);
-      const resolvedUserId = userProfile.user_id;
-      // Validate mapping consistency
-      const mappedAgentId = await getAgentIdForUser(resolvedUserId);
-      if (lead.agent_id !== mappedAgentId) throw new Error(`Agent mismatch for ${callId} (lead.agent_id=${lead.agent_id}, mapped=${mappedAgentId})`);
-
-      // Get ZT token for this specific user
-      const { token } = await getZTTokenForUser(resolvedUserId);
+      // Get ZT token for any user mapped to this agent
+      const { token } = await getZTTokenForAgent(lead.agent_id);
       const validation = validateLeadData(lead);
       if (!validation.isValid) { await logSyncAttempt(callId, 'failed', null, `Validation failed: ${validation.errors.join(', ')}`); await supabase.from('zt_manual_sync').update({ status:'failed', error_message: validation.errors.join(', '), updated_at: new Date().toISOString() }).eq('call_id', callId); continue; }
       await logSyncAttempt(callId, 'pending');
@@ -238,7 +267,7 @@ async function runManualQueue() {
     } catch (e) {
       await logSyncAttempt(callId, 'failed', null, e.message);
       await supabase.from('zt_manual_sync').update({ status:'failed', error_message: e.message, updated_at: new Date().toISOString() }).eq('call_id', callId);
-      console.log(`Manual error: ${callId}: ${e.message}`);
+      console.error(`Manual error: ${callId}`, e);
     }
   }
 }
@@ -251,6 +280,6 @@ async function main() {
   console.log('✅ ZT Integration Script completed');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (require.main === module) {
   main().catch(err=>{ console.error(err); process.exit(1); });
 }
