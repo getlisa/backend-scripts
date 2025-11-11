@@ -55,8 +55,9 @@ async function requestZTToken(credentials, userId) {
   }
   const json = await res.json();
   const token = json?.result?.['access-token'];
+  const companyId = json?.result?.user?.company?.id;
   if (!token) throw new Error('No access-token');
-  return { token, user_id: userId };
+  return { token, user_id: userId, company_id: companyId || 3 };
 }
 
 async function getZTTokenForUser(user_id) {
@@ -78,7 +79,7 @@ async function getZTTokenForAgent(agentId) {
 
   const { data: tokenRows, error: tokenErr } = await supabase
     .from('zentrades_tokens')
-    .select('user_id, username, password, company_id')
+    .select('user_id, username, password')
     .in('user_id', userIds);
   if (tokenErr) throw new Error(`zentrades_tokens lookup failed: ${tokenErr.message}`);
   if (!tokenRows || tokenRows.length === 0) throw new Error(`No zentrades_tokens row for agent_id=${agentId}`);
@@ -88,10 +89,8 @@ async function getZTTokenForAgent(agentId) {
 
   const credentials = { username: matchingToken.username, password: matchingToken.password, rememberMe: true };
   const tokenResult = await requestZTToken(credentials, matchingToken.user_id);
-  return {
-    ...tokenResult,
-    company_id: matchingToken.company_id || 3 // Fallback to 3 if not set
-  };
+  // company_id comes from the login API response
+  return tokenResult;
 }
 
 function parseAddress(address) {
