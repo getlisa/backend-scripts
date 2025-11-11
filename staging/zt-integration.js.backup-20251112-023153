@@ -78,7 +78,7 @@ async function getZTTokenForAgent(agentId) {
 
   const { data: tokenRows, error: tokenErr } = await supabase
     .from('zentrades_tokens')
-    .select('user_id, username, password, company_id')
+    .select('user_id, username, password')
     .in('user_id', userIds);
   if (tokenErr) throw new Error(`zentrades_tokens lookup failed: ${tokenErr.message}`);
   if (!tokenRows || tokenRows.length === 0) throw new Error(`No zentrades_tokens row for agent_id=${agentId}`);
@@ -87,11 +87,7 @@ async function getZTTokenForAgent(agentId) {
   if (!matchingToken?.user_id) throw new Error(`Invalid zentrades_tokens entry for agent_id=${agentId}`);
 
   const credentials = { username: matchingToken.username, password: matchingToken.password, rememberMe: true };
-  const tokenResult = await requestZTToken(credentials, matchingToken.user_id);
-  return {
-    ...tokenResult,
-    company_id: matchingToken.company_id || 3 // Fallback to 3 if not set
-  };
+  return requestZTToken(credentials, matchingToken.user_id);
 }
 
 function parseAddress(address) {
@@ -146,7 +142,7 @@ function cleanEmail(email) {
   return re.test(cleaned) ? cleaned : null;
 }
 
-function transformLeadToZTBooking(lead, ztCompanyId = 3) {
+function transformLeadToZTBooking(lead) {
   const addressParts = parseAddress(lead.client_address);
   const currentDate = new Date().toISOString().split('T')[0];
   let startBookingTime, endBookingTime, bookDate;
@@ -175,7 +171,7 @@ function transformLeadToZTBooking(lead, ztCompanyId = 3) {
   
   const formattedPhone = formatPhoneNumber(lead.from_number);
   return { startBookingTime, endBookingTime, bookDate, name: validName, email: validEmail, phoneNumber: formattedPhone,
-    addressLineOne: addressParts.addressLineOne, addressLineTwo: ' ', city: addressParts.city, state: addressParts.state, country: addressParts.country, zipCode: addressParts.zipCode, companyId: ztCompanyId, description: lead.job_description, source: 'Web' };
+    addressLineOne: addressParts.addressLineOne, addressLineTwo: ' ', city: addressParts.city, state: addressParts.state, country: addressParts.country, zipCode: addressParts.zipCode, companyId: 3, description: lead.job_description, source: 'Web' };
 }
 
 function validateLeadData(lead) {
@@ -206,8 +202,8 @@ function validateLeadData(lead) {
   return { isValid: errors.length===0, errors };
 }
 
-async function createZTBooking(lead, token, ztCompanyId = 3) {
-  const payload = transformLeadToZTBooking(lead, ztCompanyId);
+async function createZTBooking(lead, token) {
+  const payload = transformLeadToZTBooking(lead);
   const res = await fetch(`${ZT_API_BASE}/api/ob/obr/book/`, {
     method: 'POST',
     headers: {
@@ -254,11 +250,11 @@ async function runManualQueue() {
       const { data: lead, error: leadErr } = await supabase.from('call_logs').select('*').eq('call_id', callId).eq('call_status', 'ended').single();
       if (leadErr || !lead) throw new Error(`Lead not found: ${callId}`);
       // Get ZT token for any user mapped to this agent
-      const { token, company_id } = await getZTTokenForAgent(lead.agent_id);
+      const { token } = await getZTTokenForAgent(lead.agent_id);
       const validation = validateLeadData(lead);
       if (!validation.isValid) { await logSyncAttempt(callId, 'failed', null, `Validation failed: ${validation.errors.join(', ')}`); await supabase.from('zt_manual_sync').update({ status:'failed', error_message: validation.errors.join(', '), updated_at: new Date().toISOString() }).eq('call_id', callId); continue; }
       await logSyncAttempt(callId, 'pending');
-      const result = await createZTBooking(lead, token, company_id);
+      const result = await createZTBooking(lead, token);
       if (result.success) {
         await logSyncAttempt(callId, 'success', result.booking_id);
         await supabase.from('zt_manual_sync').update({ status:'success', zt_booking_id: result.booking_id, error_message: null, updated_at: new Date().toISOString() }).eq('call_id', callId);
