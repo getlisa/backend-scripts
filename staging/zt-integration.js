@@ -237,41 +237,52 @@ function transformLeadToZTBooking(lead, ztCompanyId = 3, timezone = null) {
   
   // Get timezone offset dynamically based on the company's timezone
   const ZT_TIMEZONE_OFFSET_MINUTES = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
+  console.log(`⏰ Timezone conversion: ${timezone} offset = ${ZT_TIMEZONE_OFFSET_MINUTES} minutes`);
   
   if (lead.appointment_start && lead.appointment_date) {
-    // The platform converts UTC time to its timezone for display
-    // We need to send UTC time that will display as the original time
+    // The time in call_logs (14:00) is the desired display time on the platform
+    // Platform adds timezone offset when displaying, so we need to subtract it before sending
+    // For Asia/Kolkata (UTC+5:30 = +330 min): To display 14:00, send 14:00 - 330 min = 08:30 UTC
     
-    // Send the time without Z suffix - let the timezone-offset header handle it
-    // The API will interpret this as local time in the specified timezone
-    const timeWithoutZ = `${lead.appointment_date}T${lead.appointment_start}.000`;
+    // Parse the appointment time WITHOUT timezone (treat as naive time)
+    const [hours, minutes] = lead.appointment_start.split(':').map(Number);
+    const appointmentDate = new Date(lead.appointment_date);
+    appointmentDate.setUTCHours(hours, minutes, 0, 0);
     
-    // Calculate end time
-    const [hours, minutes, seconds] = lead.appointment_start.split(':').map(Number);
-    const endHours = hours + 1;
-    const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds || 0).padStart(2, '0')}`;
-    const endTimeWithoutZ = `${lead.appointment_date}T${endTimeStr}.000`;
+    console.log(`📅 Original appointment: ${lead.appointment_date} ${lead.appointment_start}`);
+    console.log(`📅 Parsed as UTC: ${appointmentDate.toISOString()}`);
     
-    startBookingTime = timeWithoutZ;
-    endBookingTime = endTimeWithoutZ;
-    bookDate = timeWithoutZ;
+    // Subtract timezone offset to get the UTC time to send
+    const utcTime = new Date(appointmentDate.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+    const utcEndTime = new Date(utcTime.getTime() + 60 * 60 * 1000);
+    
+    console.log(`📅 After timezone adjustment: ${utcTime.toISOString()}`);
+    console.log(`📅 This will display as: ${new Date(utcTime.getTime() + (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000)).toISOString()}`);
+    
+    // Format as ISO string without Z suffix for the API
+    startBookingTime = utcTime.toISOString().replace('Z', '');
+    endBookingTime = utcEndTime.toISOString().replace('Z', '');
+    bookDate = startBookingTime;
   } else if (lead.appointment_date && lead.appointment_date !== 'null') {
-    // Default times also need adjustment - parse as UTC first
-    const defaultStart = new Date(`${lead.appointment_date}T06:30:00Z`);
-    const adjustedStart = new Date(defaultStart.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+    // Default time 06:30 - apply timezone offset
+    const defaultDate = new Date(lead.appointment_date);
+    defaultDate.setUTCHours(6, 30, 0, 0);
+    const adjustedStart = new Date(defaultDate.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
     const adjustedEnd = new Date(adjustedStart.getTime() + 60 * 60 * 1000);
     
-    startBookingTime = adjustedStart.toISOString();
-    endBookingTime = adjustedEnd.toISOString();
-    bookDate = adjustedStart.toISOString();
+    startBookingTime = adjustedStart.toISOString().replace('Z', '');
+    endBookingTime = adjustedEnd.toISOString().replace('Z', '');
+    bookDate = adjustedStart.toISOString().replace('Z', '');
   } else {
-    const defaultStart = new Date(`${currentDate}T06:30:00`);
-    const adjustedStart = new Date(defaultStart.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+    // No appointment date - use current date with default time
+    const defaultDate = new Date(currentDate);
+    defaultDate.setUTCHours(6, 30, 0, 0);
+    const adjustedStart = new Date(defaultDate.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
     const adjustedEnd = new Date(adjustedStart.getTime() + 60 * 60 * 1000);
     
-    startBookingTime = adjustedStart.toISOString();
-    endBookingTime = adjustedEnd.toISOString();
-    bookDate = adjustedStart.toISOString();
+    startBookingTime = adjustedStart.toISOString().replace('Z', '');
+    endBookingTime = adjustedEnd.toISOString().replace('Z', '');
+    bookDate = adjustedStart.toISOString().replace('Z', '');
   }
   const validName = lead.client_name;
   const validEmail = cleanEmail(lead.client_email);
