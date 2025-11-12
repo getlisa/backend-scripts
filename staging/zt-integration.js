@@ -13,12 +13,11 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-console.log('🔧 ZT Integration Script loaded');
-console.log('🔍 Environment Variables Check:');
-console.log('  ZT_API_BASE:', ZT_API_BASE || '❌ NOT LOADED');
-console.log('  OB_APP_URL:', OB_APP_URL || '❌ NOT LOADED');
-console.log('  SUPABASE_URL:', SUPABASE_URL ? '✅ Loaded' : '❌ NOT LOADED');
-console.log('  SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_ROLE_KEY ? '✅ Loaded' : '❌ NOT LOADED');
+// Verify environment variables are loaded
+if (!ZT_API_BASE || !OB_APP_URL || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('❌ Missing required environment variables');
+  process.exit(1);
+}
 
 function getTimestamp() { return Date.now(); }
 
@@ -82,34 +81,27 @@ async function requestZTToken(credentials, userId) {
   let timezone = null;
   if (companyId && ztUserId) {
     try {
-      console.log(`🔍 Fetching company details for company_id: ${companyId}, zt_user_id: ${ztUserId}`);
       const companyRes = await fetch(`${ZT_API_BASE}/api/company?timestamp=${getTimestamp()}`, {
         method: 'GET',
         headers: {
           'accept': '*/*',
           'access-token': token,
           'company-id': String(companyId),
-          'user-id': String(ztUserId), // Use ZenTrades user ID, not our database UUID
+          'user-id': String(ztUserId),
           'request-from': 'WEB_APP',
           'referer': OB_APP_URL,
           'origin': OB_APP_URL.replace(/\/$/, '')
         }
       });
-      console.log(`📡 Company API response status: ${companyRes.status}`);
       if (companyRes.ok) {
         const companyData = await companyRes.json();
-        console.log(`📦 Company data:`, JSON.stringify(companyData, null, 2));
         timezone = companyData?.result?.timezoneRegionName;
-        console.log(`🌍 Extracted timezone: ${timezone}`);
       } else {
-        const errorText = await companyRes.text();
-        console.error(`❌ Company API failed: ${companyRes.status} - ${errorText}`);
+        console.error(`❌ Company API failed: ${companyRes.status}`);
       }
     } catch (error) {
       console.error('❌ Failed to fetch company timezone:', error.message);
     }
-  } else {
-    console.log('⚠️  No company_id found in login response');
   }
   
   return { token, user_id: userId, company_id: companyId || 3, timezone };
@@ -237,27 +229,16 @@ function transformLeadToZTBooking(lead, ztCompanyId = 3, timezone = null) {
   
   // Get timezone offset dynamically based on the company's timezone
   const ZT_TIMEZONE_OFFSET_MINUTES = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
-  console.log(`⏰ Timezone conversion: ${timezone} offset = ${ZT_TIMEZONE_OFFSET_MINUTES} minutes`);
   
   if (lead.appointment_start && lead.appointment_date) {
-    // The time in call_logs (14:00) is the desired display time on the platform
-    // Platform adds timezone offset when displaying, so we need to subtract it before sending
-    // For Asia/Kolkata (UTC+5:30 = +330 min): To display 14:00, send 14:00 - 330 min = 08:30 UTC
-    
     // Parse the appointment time WITHOUT timezone (treat as naive time)
     const [hours, minutes] = lead.appointment_start.split(':').map(Number);
     const appointmentDate = new Date(lead.appointment_date);
     appointmentDate.setUTCHours(hours, minutes, 0, 0);
     
-    console.log(`📅 Original appointment: ${lead.appointment_date} ${lead.appointment_start}`);
-    console.log(`📅 Parsed as UTC: ${appointmentDate.toISOString()}`);
-    
     // Subtract timezone offset to get the UTC time to send
     const utcTime = new Date(appointmentDate.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
     const utcEndTime = new Date(utcTime.getTime() + 60 * 60 * 1000);
-    
-    console.log(`📅 After timezone adjustment: ${utcTime.toISOString()}`);
-    console.log(`📅 This will display as: ${new Date(utcTime.getTime() + (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000)).toISOString()}`);
     
     // Format as ISO string without Z suffix for the API
     startBookingTime = utcTime.toISOString().replace('Z', '');
@@ -329,15 +310,8 @@ async function createZTBooking(lead, token, ztCompanyId = 3, timezone = null) {
   const payload = transformLeadToZTBooking(lead, ztCompanyId, timezone);
   
   // Calculate timezone offset for the header
-  // The API expects the offset in minutes (negative for ahead of UTC)
   const timezoneOffsetMinutes = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
-  const timezoneOffsetHeader = String(-timezoneOffsetMinutes); // Negate because API expects opposite sign
-  
-  // Log what we're sending
-  console.log('📤 Booking Payload:', JSON.stringify(payload, null, 2));
-  console.log('🌍 Timezone:', timezone);
-  console.log('⏰ Timezone Offset (minutes):', timezoneOffsetMinutes);
-  console.log('📋 Timezone Offset Header:', timezoneOffsetHeader);
+  const timezoneOffsetHeader = String(-timezoneOffsetMinutes);
   
   const res = await fetch(`${ZT_API_BASE}/api/ob/obr/book/`, {
     method: 'POST',
@@ -373,12 +347,10 @@ async function logSyncAttempt(callLogId, status, ztBookingId=null, errorMessage=
 
 // Process pending manual items from zt_manual_sync
 async function runManualQueue() {
-  console.log('🔍 Checking for pending manual sync items...');
-  // Fetch pending manual call_ids
   const { data: rows, error } = await supabase.from('zt_manual_sync').select('call_id').eq('status','pending').order('created_at', { ascending: true }).limit(10);
   if (error) throw new Error(error.message);
-  if (!rows || rows.length===0) { console.log('✅ No manual items to process'); return; }
-  console.log(`📋 Found ${rows.length} pending manual sync items`);
+  if (!rows || rows.length===0) return;
+  console.log(`Processing ${rows.length} pending sync items`);
   for (const row of rows) {
     const callId = row.call_id;
     try {
@@ -393,26 +365,24 @@ async function runManualQueue() {
       if (result.success) {
         await logSyncAttempt(callId, 'success', result.booking_id);
         await supabase.from('zt_manual_sync').update({ status:'success', zt_booking_id: result.booking_id, error_message: null, updated_at: new Date().toISOString() }).eq('call_id', callId);
-        console.log(`Manual synced: ${callId}`);
+        console.log(`✅ Synced: ${callId}`);
       } else {
         await logSyncAttempt(callId, 'failed', null, result.error);
         await supabase.from('zt_manual_sync').update({ status:'failed', error_message: result.error, updated_at: new Date().toISOString() }).eq('call_id', callId);
-        console.log(`Manual failed: ${callId}`);
+        console.log(`❌ Failed: ${callId} - ${result.error}`);
       }
     } catch (e) {
       await logSyncAttempt(callId, 'failed', null, e.message);
       await supabase.from('zt_manual_sync').update({ status:'failed', error_message: e.message, updated_at: new Date().toISOString() }).eq('call_id', callId);
-      console.error(`Manual error: ${callId}`, e);
+      console.error(`❌ Error: ${callId} - ${e.message}`);
     }
   }
 }
 
 async function main() {
-  console.log('🚀 Starting ZT Integration Script...');
-  console.log('🔗 Database URL:', process.env.SUPABASE_URL);
-  console.log('🔑 Service Key:', process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Present' : 'Missing');
+  console.log('🚀 Starting ZT Integration...');
   await runManualQueue();
-  console.log('✅ ZT Integration Script completed');
+  console.log('✅ Completed');
 }
 
 if (require.main === module) {
