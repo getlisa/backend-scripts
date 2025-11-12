@@ -225,21 +225,25 @@ function transformLeadToZTBooking(lead, ztCompanyId = 3, timezone = null) {
   const ZT_TIMEZONE_OFFSET_MINUTES = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
   
   if (lead.appointment_start && lead.appointment_date) {
-    // Parse the appointment time as if it's the desired display time in Asia/Kolkata
-    const localDateTime = `${lead.appointment_date}T${lead.appointment_start}`;
-    const localTime = new Date(localDateTime);
+    // The input time (e.g., 14:00:00) is what should display in the company's timezone
+    // We need to convert it to UTC such that when ZT converts it back, it shows the original time
     
-    // Subtract the timezone offset to get the UTC time that will display correctly
-    // When ZT adds +5:30, it will show the original time
-    const utcTime = new Date(localTime.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
-    const utcEndTime = new Date(utcTime.getTime() + 60 * 60 * 1000);
+    // Parse as UTC first to avoid server timezone interpretation
+    const dateTimeStr = `${lead.appointment_date}T${lead.appointment_start}Z`;
+    const utcTime = new Date(dateTimeStr);
     
-    startBookingTime = utcTime.toISOString();
-    endBookingTime = utcEndTime.toISOString();
-    bookDate = utcTime.toISOString();
+    // Now subtract the timezone offset
+    // If timezone is UTC+5:30 (330 min), we subtract 330 min
+    // So 14:00 UTC becomes 08:30 UTC, which displays as 14:00 in UTC+5:30
+    const adjustedTime = new Date(utcTime.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+    const adjustedEndTime = new Date(adjustedTime.getTime() + 60 * 60 * 1000);
+    
+    startBookingTime = adjustedTime.toISOString();
+    endBookingTime = adjustedEndTime.toISOString();
+    bookDate = adjustedTime.toISOString();
   } else if (lead.appointment_date && lead.appointment_date !== 'null') {
-    // Default times also need adjustment
-    const defaultStart = new Date(`${lead.appointment_date}T06:30:00`);
+    // Default times also need adjustment - parse as UTC first
+    const defaultStart = new Date(`${lead.appointment_date}T06:30:00Z`);
     const adjustedStart = new Date(defaultStart.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
     const adjustedEnd = new Date(adjustedStart.getTime() + 60 * 60 * 1000);
     
