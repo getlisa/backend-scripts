@@ -225,22 +225,17 @@ function transformLeadToZTBooking(lead, ztCompanyId = 3, timezone = null) {
   const ZT_TIMEZONE_OFFSET_MINUTES = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
   
   if (lead.appointment_start && lead.appointment_date) {
-    // The input time (e.g., 14:00:00) is what should display in the company's timezone
-    // We need to convert it to UTC such that when ZT converts it back, it shows the original time
+    // Send the time exactly as stored in call_logs
+    // The platform will display it as-is in its timezone
+    startBookingTime = `${lead.appointment_date}T${lead.appointment_start}.000Z`;
     
-    // Parse as UTC first to avoid server timezone interpretation
-    const dateTimeStr = `${lead.appointment_date}T${lead.appointment_start}Z`;
-    const utcTime = new Date(dateTimeStr);
+    // Calculate end time (1 hour later) - parse and add 1 hour
+    const [hours, minutes, seconds] = lead.appointment_start.split(':').map(Number);
+    const endHours = hours + 1;
+    const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds || 0).padStart(2, '0')}`;
     
-    // Now subtract the timezone offset
-    // If timezone is UTC+5:30 (330 min), we subtract 330 min
-    // So 14:00 UTC becomes 08:30 UTC, which displays as 14:00 in UTC+5:30
-    const adjustedTime = new Date(utcTime.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
-    const adjustedEndTime = new Date(adjustedTime.getTime() + 60 * 60 * 1000);
-    
-    startBookingTime = adjustedTime.toISOString();
-    endBookingTime = adjustedEndTime.toISOString();
-    bookDate = adjustedTime.toISOString();
+    endBookingTime = `${lead.appointment_date}T${endTimeStr}.000Z`;
+    bookDate = startBookingTime;
   } else if (lead.appointment_date && lead.appointment_date !== 'null') {
     // Default times also need adjustment - parse as UTC first
     const defaultStart = new Date(`${lead.appointment_date}T06:30:00Z`);
