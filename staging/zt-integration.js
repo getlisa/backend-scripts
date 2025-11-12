@@ -300,13 +300,19 @@ function validateLeadData(lead) {
 
 async function createZTBooking(lead, token, ztCompanyId = 3, timezone = null) {
   const payload = transformLeadToZTBooking(lead, ztCompanyId, timezone);
+  
+  // Calculate timezone offset for the header
+  // The API expects the offset in minutes (negative for ahead of UTC)
+  const timezoneOffsetMinutes = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
+  const timezoneOffsetHeader = String(-timezoneOffsetMinutes); // Negate because API expects opposite sign
+  
   const res = await fetch(`${ZT_API_BASE}/api/ob/obr/book/`, {
     method: 'POST',
     headers: {
       'accept': 'application/json, text/plain, */*',
       'content-type': 'application/json',
       'referer': OB_APP_URL,
-      'timezone-offset': '-330',
+      'timezone-offset': timezoneOffsetHeader,
       'user-agent': 'Mozilla/5.0',
       'Authorization': `Bearer ${token}`
     },
