@@ -228,17 +228,19 @@ function transformLeadToZTBooking(lead, ztCompanyId = 3, timezone = null) {
     // The platform converts UTC time to its timezone for display
     // We need to send UTC time that will display as the original time
     
-    // Parse the desired display time as UTC
-    const displayTime = `${lead.appointment_date}T${lead.appointment_start}Z`;
-    const displayDate = new Date(displayTime);
+    // Send the time without Z suffix - let the timezone-offset header handle it
+    // The API will interpret this as local time in the specified timezone
+    const timeWithoutZ = `${lead.appointment_date}T${lead.appointment_start}.000`;
     
-    // Subtract the timezone offset to get the UTC time to send
-    const utcTime = new Date(displayDate.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
-    const utcEndTime = new Date(utcTime.getTime() + 60 * 60 * 1000);
+    // Calculate end time
+    const [hours, minutes, seconds] = lead.appointment_start.split(':').map(Number);
+    const endHours = hours + 1;
+    const endTimeStr = `${String(endHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds || 0).padStart(2, '0')}`;
+    const endTimeWithoutZ = `${lead.appointment_date}T${endTimeStr}.000`;
     
-    startBookingTime = utcTime.toISOString();
-    endBookingTime = utcEndTime.toISOString();
-    bookDate = utcTime.toISOString();
+    startBookingTime = timeWithoutZ;
+    endBookingTime = endTimeWithoutZ;
+    bookDate = timeWithoutZ;
   } else if (lead.appointment_date && lead.appointment_date !== 'null') {
     // Default times also need adjustment - parse as UTC first
     const defaultStart = new Date(`${lead.appointment_date}T06:30:00Z`);
