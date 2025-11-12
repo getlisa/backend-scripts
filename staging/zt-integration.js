@@ -75,9 +75,30 @@ async function requestZTToken(credentials, userId) {
   const json = await res.json();
   const token = json?.result?.['access-token'];
   const companyId = json?.result?.user?.company?.id;
-  const timezoneRegionName = json?.result?.timezoneRegionName;
   if (!token) throw new Error('No access-token');
-  return { token, user_id: userId, company_id: companyId || 3, timezone: timezoneRegionName };
+  
+  // Fetch timezone from company API
+  let timezone = null;
+  if (companyId) {
+    try {
+      const companyRes = await fetch(`${ZT_API_BASE}/api/company`, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json, text/plain, */*',
+          'Authorization': `Bearer ${token}`,
+          'referer': OB_APP_URL
+        }
+      });
+      if (companyRes.ok) {
+        const companyData = await companyRes.json();
+        timezone = companyData?.result?.timezoneRegionName;
+      }
+    } catch (error) {
+      console.error('Failed to fetch company timezone:', error.message);
+    }
+  }
+  
+  return { token, user_id: userId, company_id: companyId || 3, timezone };
 }
 
 async function getZTTokenForUser(user_id) {
