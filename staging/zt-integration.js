@@ -22,6 +22,25 @@ console.log('  SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_ROLE_KEY ? '✅ Loa
 
 function getTimestamp() { return Date.now(); }
 
+// Calculate timezone offset in minutes for a given timezone
+function getTimezoneOffsetMinutes(timezoneRegionName) {
+  if (!timezoneRegionName) return 0;
+  
+  try {
+    // Create a date in the target timezone
+    const date = new Date();
+    const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+    const tzDate = new Date(date.toLocaleString('en-US', { timeZone: timezoneRegionName }));
+    
+    // Calculate offset in minutes
+    const offsetMinutes = (tzDate.getTime() - utcDate.getTime()) / (1000 * 60);
+    return offsetMinutes;
+  } catch (error) {
+    console.error(`Error calculating timezone offset for ${timezoneRegionName}:`, error.message);
+    return 0;
+  }
+}
+
 async function getZTCredentialsForUser(targetUserId) {
   if (!targetUserId) throw new Error('getZTCredentialsForUser: user_id is required');
   const { data, error } = await supabase
@@ -56,8 +75,9 @@ async function requestZTToken(credentials, userId) {
   const json = await res.json();
   const token = json?.result?.['access-token'];
   const companyId = json?.result?.user?.company?.id;
+  const timezoneRegionName = json?.result?.timezoneRegionName;
   if (!token) throw new Error('No access-token');
-  return { token, user_id: userId, company_id: companyId || 3 };
+  return { token, user_id: userId, company_id: companyId || 3, timezone: timezoneRegionName };
 }
 
 async function getZTTokenForUser(user_id) {
@@ -98,35 +118,65 @@ function parseAddress(address) {
     return { addressLineOne: 'Address not provided', city: 'Unknown City', state: 'Unknown State', country: 'US', zipCode: '00000' };
   }
   
-  // Enhanced address parsing with zip code extraction
+  // Split by comma
   const parts = address.split(',').map(p => p.trim());
   
-  // Look for 6-digit zip code in any part of the address
+  // Extract zip code (5 or 6 digits)
   let zipCode = '00000';
-  const zipRegex = /\b\d{6}\b/;
+  let state = 'Unknown State';
+  let stateZipPart = null;
+  let stateZipIndex = -1;
   
-  for (const part of parts) {
-    const zipMatch = part.match(zipRegex);
+  // Find the part containing state/province and postal code
+  // US ZIP: 5 digits (12345) or 9 digits (12345-6789)
+  // Canada Postal: A1A 1A1 or A1A1A1 or A1A
+  const zipRegex = /\b\d{5}(?:-\d{4})?\b|\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b|\b[A-Z]\d[A-Z]\b/i;
+  for (let i = 0; i < parts.length; i++) {
+    const zipMatch = parts[i].match(zipRegex);
     if (zipMatch) {
       zipCode = zipMatch[0];
+      stateZipPart = parts[i];
+      stateZipIndex = i;
+      
+      // Extract state/province (usually 2 letters before the postal code)
+      // For US: NY 11746 or NY 10038-9110
+      // For Canada: ON A1A 1A1 or ON A1A1A1
+      const stateMatch = parts[i].match(/\b([A-Z]{2})\s+(?:\d{5}(?:-\d{4})?|[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]\d[A-Z])\b/i);
+      if (stateMatch) {
+        state = stateMatch[1].toUpperCase();
+      }
       break;
     }
   }
   
-  // Also check the full address string for zip code
-  if (zipCode === '00000') {
-    const fullZipMatch = address.match(zipRegex);
-    if (fullZipMatch) {
-      zipCode = fullZipMatch[0];
+  // Determine address line and city
+  let addressLineOne = parts[0] || 'Address not provided';
+  let city = 'Unknown City';
+  
+  if (stateZipIndex > 0) {
+    // City is the part before state/zip
+    city = parts[stateZipIndex - 1] || 'Unknown City';
+  } else if (parts.length > 1) {
+    city = parts[1] || 'Unknown City';
+  }
+  
+  // Country is usually the last part - normalize to US or Canada
+  let country = 'US'; // Default to US
+  if (parts.length > 0) {
+    const lastPart = parts[parts.length - 1].toUpperCase();
+    if (lastPart === 'CANADA' || lastPart === 'CA' || lastPart === 'CAN') {
+      country = 'Canada';
+    } else if (lastPart === 'USA' || lastPart === 'US' || lastPart === 'UNITED STATES') {
+      country = 'US';
     }
   }
   
   return {
-    addressLineOne: parts[0] || 'Address not provided',
-    city: parts[1] || 'Unknown City',
-    state: parts[2] || 'Unknown State',
-    country: 'US',
-    zipCode: zipCode
+    addressLineOne,
+    city,
+    state,
+    country,
+    zipCode
   };
 }
 
@@ -145,24 +195,44 @@ function cleanEmail(email) {
   return re.test(cleaned) ? cleaned : null;
 }
 
-function transformLeadToZTBooking(lead, ztCompanyId = 3) {
+function transformLeadToZTBooking(lead, ztCompanyId = 3, timezone = null) {
   const addressParts = parseAddress(lead.client_address);
   const currentDate = new Date().toISOString().split('T')[0];
   let startBookingTime, endBookingTime, bookDate;
+  
+  // Get timezone offset dynamically based on the company's timezone
+  const ZT_TIMEZONE_OFFSET_MINUTES = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
+  
   if (lead.appointment_start && lead.appointment_date) {
-    startBookingTime = `${lead.appointment_date}T${lead.appointment_start}.000Z`;
-    const start = new Date(`${lead.appointment_date}T${lead.appointment_start}`);
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
-    endBookingTime = end.toISOString().split('.')[0] + '.000Z';
-    bookDate = `${lead.appointment_date}T${lead.appointment_start}.000Z`;
+    // Parse the appointment time as if it's the desired display time in Asia/Kolkata
+    const localDateTime = `${lead.appointment_date}T${lead.appointment_start}`;
+    const localTime = new Date(localDateTime);
+    
+    // Subtract the timezone offset to get the UTC time that will display correctly
+    // When ZT adds +5:30, it will show the original time
+    const utcTime = new Date(localTime.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+    const utcEndTime = new Date(utcTime.getTime() + 60 * 60 * 1000);
+    
+    startBookingTime = utcTime.toISOString();
+    endBookingTime = utcEndTime.toISOString();
+    bookDate = utcTime.toISOString();
   } else if (lead.appointment_date && lead.appointment_date !== 'null') {
-    startBookingTime = `${lead.appointment_date}T02:30:00.000Z`;
-    endBookingTime = `${lead.appointment_date}T03:30:00.000Z`;
-    bookDate = `${lead.appointment_date}T02:30:00.000Z`;
+    // Default times also need adjustment
+    const defaultStart = new Date(`${lead.appointment_date}T06:30:00`);
+    const adjustedStart = new Date(defaultStart.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+    const adjustedEnd = new Date(adjustedStart.getTime() + 60 * 60 * 1000);
+    
+    startBookingTime = adjustedStart.toISOString();
+    endBookingTime = adjustedEnd.toISOString();
+    bookDate = adjustedStart.toISOString();
   } else {
-    startBookingTime = `${currentDate}T02:30:00.000Z`;
-    endBookingTime = `${currentDate}T03:30:00.000Z`;
-    bookDate = `${currentDate}T02:30:00.000Z`;
+    const defaultStart = new Date(`${currentDate}T06:30:00`);
+    const adjustedStart = new Date(defaultStart.getTime() - (ZT_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+    const adjustedEnd = new Date(adjustedStart.getTime() + 60 * 60 * 1000);
+    
+    startBookingTime = adjustedStart.toISOString();
+    endBookingTime = adjustedEnd.toISOString();
+    bookDate = adjustedStart.toISOString();
   }
   const validName = lead.client_name;
   const validEmail = cleanEmail(lead.client_email);
@@ -205,8 +275,8 @@ function validateLeadData(lead) {
   return { isValid: errors.length===0, errors };
 }
 
-async function createZTBooking(lead, token, ztCompanyId = 3) {
-  const payload = transformLeadToZTBooking(lead, ztCompanyId);
+async function createZTBooking(lead, token, ztCompanyId = 3, timezone = null) {
+  const payload = transformLeadToZTBooking(lead, ztCompanyId, timezone);
   const res = await fetch(`${ZT_API_BASE}/api/ob/obr/book/`, {
     method: 'POST',
     headers: {
@@ -253,11 +323,11 @@ async function runManualQueue() {
       const { data: lead, error: leadErr } = await supabase.from('call_logs').select('*').eq('call_id', callId).eq('call_status', 'ended').single();
       if (leadErr || !lead) throw new Error(`Lead not found: ${callId}`);
       // Get ZT token for any user mapped to this agent
-      const { token, company_id } = await getZTTokenForAgent(lead.agent_id);
+      const { token, company_id, timezone } = await getZTTokenForAgent(lead.agent_id);
       const validation = validateLeadData(lead);
       if (!validation.isValid) { await logSyncAttempt(callId, 'failed', null, `Validation failed: ${validation.errors.join(', ')}`); await supabase.from('zt_manual_sync').update({ status:'failed', error_message: validation.errors.join(', '), updated_at: new Date().toISOString() }).eq('call_id', callId); continue; }
       await logSyncAttempt(callId, 'pending');
-      const result = await createZTBooking(lead, token, company_id);
+      const result = await createZTBooking(lead, token, company_id, timezone);
       if (result.success) {
         await logSyncAttempt(callId, 'success', result.booking_id);
         await supabase.from('zt_manual_sync').update({ status:'success', zt_booking_id: result.booking_id, error_message: null, updated_at: new Date().toISOString() }).eq('call_id', callId);
