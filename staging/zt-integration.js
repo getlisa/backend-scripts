@@ -81,21 +81,34 @@ async function requestZTToken(credentials, userId) {
   let timezone = null;
   if (companyId) {
     try {
-      const companyRes = await fetch(`${ZT_API_BASE}/api/company`, {
+      console.log(`🔍 Fetching company details for company_id: ${companyId}, user_id: ${userId}`);
+      const companyRes = await fetch(`${ZT_API_BASE}/api/company?timestamp=${getTimestamp()}`, {
         method: 'GET',
         headers: {
-          'accept': 'application/json, text/plain, */*',
-          'Authorization': `Bearer ${token}`,
-          'referer': OB_APP_URL
+          'accept': '*/*',
+          'access-token': token,
+          'company-id': String(companyId),
+          'user-id': String(userId),
+          'request-from': 'WEB_APP',
+          'referer': OB_APP_URL,
+          'origin': OB_APP_URL.replace(/\/$/, '')
         }
       });
+      console.log(`📡 Company API response status: ${companyRes.status}`);
       if (companyRes.ok) {
         const companyData = await companyRes.json();
+        console.log(`📦 Company data:`, JSON.stringify(companyData, null, 2));
         timezone = companyData?.result?.timezoneRegionName;
+        console.log(`🌍 Extracted timezone: ${timezone}`);
+      } else {
+        const errorText = await companyRes.text();
+        console.error(`❌ Company API failed: ${companyRes.status} - ${errorText}`);
       }
     } catch (error) {
-      console.error('Failed to fetch company timezone:', error.message);
+      console.error('❌ Failed to fetch company timezone:', error.message);
     }
+  } else {
+    console.log('⚠️  No company_id found in login response');
   }
   
   return { token, user_id: userId, company_id: companyId || 3, timezone };
@@ -307,6 +320,12 @@ async function createZTBooking(lead, token, ztCompanyId = 3, timezone = null) {
   // The API expects the offset in minutes (negative for ahead of UTC)
   const timezoneOffsetMinutes = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
   const timezoneOffsetHeader = String(-timezoneOffsetMinutes); // Negate because API expects opposite sign
+  
+  // Log what we're sending
+  console.log('📤 Booking Payload:', JSON.stringify(payload, null, 2));
+  console.log('🌍 Timezone:', timezone);
+  console.log('⏰ Timezone Offset (minutes):', timezoneOffsetMinutes);
+  console.log('📋 Timezone Offset Header:', timezoneOffsetHeader);
   
   const res = await fetch(`${ZT_API_BASE}/api/ob/obr/book/`, {
     method: 'POST',
