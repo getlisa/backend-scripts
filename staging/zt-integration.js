@@ -75,20 +75,21 @@ async function requestZTToken(credentials, userId) {
   const json = await res.json();
   const token = json?.result?.['access-token'];
   const companyId = json?.result?.user?.company?.id;
+  const ztUserId = json?.result?.user?.id; // Get ZenTrades numeric user ID
   if (!token) throw new Error('No access-token');
   
   // Fetch timezone from company API
   let timezone = null;
-  if (companyId) {
+  if (companyId && ztUserId) {
     try {
-      console.log(`🔍 Fetching company details for company_id: ${companyId}, user_id: ${userId}`);
+      console.log(`🔍 Fetching company details for company_id: ${companyId}, zt_user_id: ${ztUserId}`);
       const companyRes = await fetch(`${ZT_API_BASE}/api/company?timestamp=${getTimestamp()}`, {
         method: 'GET',
         headers: {
           'accept': '*/*',
           'access-token': token,
           'company-id': String(companyId),
-          'user-id': String(userId),
+          'user-id': String(ztUserId), // Use ZenTrades user ID, not our database UUID
           'request-from': 'WEB_APP',
           'referer': OB_APP_URL,
           'origin': OB_APP_URL.replace(/\/$/, '')
